@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Kamera-Test – Finger auf Tasten</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1f2228; --line: #343841; --text: #eef0f3; --muted: #9aa1ad;
+    --f1: #e4572e; --f2: #f3a712; --f3: #29a36a; --f4: #2e86de; --f5: #9b59b6;
+    --ok: #2ecc71; --warn: #ff9f43;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { display: flex; flex-direction: column;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px;
+    background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; font-weight: 600; }
+  button, select, input { font: inherit; color: var(--text); background: #2a2e36; border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 11px; }
+  button { cursor: pointer; }
+  button.primary { background: #3d6bd6; border-color: #3d6bd6; }
+  button.active { background: #7a4fd6; border-color: #7a4fd6; }
+  button:disabled { opacity: .45; }
+  label.file { display: inline-block; }
+  label.file input { display: none; }
+  .sep { width: 1px; height: 26px; background: var(--line); margin: 0 4px; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #stage { flex: 1; position: relative; display: flex; align-items: center; justify-content: center; min-width: 0; background: #000; }
+  canvas { max-width: 100%; max-height: 100%; touch-action: none; }
+  #hint { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); background: rgba(20,22,26,.88);
+    padding: 8px 14px; border-radius: 10px; border: 1px solid var(--line); max-width: 90%; text-align: center; pointer-events: none; }
+  #hint:empty { display: none; }
+  aside { width: 290px; background: var(--panel); border-left: 1px solid var(--line); padding: 12px; overflow: auto; }
+  aside h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 14px 0 6px; }
+  aside h2:first-child { margin-top: 0; }
+  .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .row > * { flex: 1; }
+  .row label { flex: 0 0 auto; color: var(--muted); font-size: 13px; }
+  #chordName { font-size: 34px; font-weight: 700; text-align: center; margin: 4px 0; }
+  #nextName { text-align: center; color: var(--muted); font-size: 13px; }
+  #fingers div { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .dot { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 12px; color: #fff; flex: 0 0 auto; }
+  .st { margin-left: auto; font-weight: 600; }
+  .st.ok { color: var(--ok); } .st.warn { color: var(--warn); } .st.none { color: var(--muted); }
+  #verdict { margin-top: 10px; padding: 10px; border-radius: 10px; text-align: center; font-weight: 700; background: #2a2e36; }
+  #verdict.ok { background: rgba(46,204,113,.18); color: var(--ok); }
+  #status { color: var(--muted); font-size: 12px; margin-top: 12px; white-space: pre-line; }
+  .small { color: var(--muted); font-size: 12px; }
+  @media (max-width: 820px) { main { flex-direction: column; } aside { width: auto; border-left: 0; border-top: 1px solid var(--line); max-height: 42vh; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Kamera-Test</h1>
+  <button id="btnCam" class="primary">Kamera starten</button>
+  <button id="btnFlip" title="Vorder-/Rückkamera wechseln">Kamera wechseln</button>
+  <input id="fileVideo" type="file" accept="video/*" style="display:none">
+  <button type="button" id="btnVideo">Video laden</button>
+  <span class="sep"></span>
+  <button id="btnCal">Kalibrieren</button>
+  <button id="btnMirror">Spiegeln</button>
+  <button id="btnGrid" class="active">Tastenraster</button>
+</header>
+<main>
+  <div id="stage">
+    <canvas id="cv" width="1280" height="720"></canvas>
+    <div id="hint">Starte die Kamera oder lade ein Video deiner Hände auf der Tastatur.</div>
+  </div>
+  <aside>
+    <h2>Akkordfolge</h2>
+    <div class="row"><input id="progInput" value="G D Em C" aria-label="Akkordfolge"></div>
+    <div class="row"><button id="btnPrev">◀</button><button id="btnApply">Übernehmen</button><button id="btnNext">▶</button></div>
+    <div id="chordName">–</div>
+    <div id="nextName"></div>
+
+    <h2>Finger (rechte Hand)</h2>
+    <div id="fingers"></div>
+    <div id="verdict">Noch keine Hand erkannt</div>
+
+    <h2>Sichtbarer Tastenbereich</h2>
+    <div class="row"><label>Linke weiße Taste</label><select id="selLow"></select></div>
+    <div class="row"><label>Anzahl weiße Tasten</label><input id="numWhite" type="number" min="7" max="52" value="15"></div>
+    <p class="small">Zähle die weißen Tasten zwischen den Ecken, die du beim Kalibrieren antippst.</p>
+
+    <div id="status">Handerkennung wird geladen …</div>
+  </aside>
+</main>
+
+<script type="module">
+// ---------- Grundlagen: Noten ----------
+const PC_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","B","H"]; // deutsch: B = Bb, H = B
+const WHITE_PCS = [0,2,4,5,7,9,11];
+const noteName = m => PC_NAMES[m % 12] + (Math.floor(m / 12) - 1);
+const isWhite = m => WHITE_PCS.includes(m % 12);
+const FINGER_COLORS = ["", "#e4572e", "#f3a712", "#29a36a", "#2e86de", "#9b59b6"];
+const FINGER_NAMES = ["", "Daumen", "Zeigefinger", "Mittelfinger", "Ringfinger", "kleiner Finger"];
+const TIP_IDX = [0, 4, 8, 12, 16, 20]; // MediaPipe-Landmarken der Fingerspitzen
+
+// ---------- Zustand ----------
+const S = {
+  mirror: false, grid: true, facing: "environment",
+  cal: loadJSON("kt_cal", null),          // 4 Punkte, normiert (0..1) im Bild: hinten-links, hinten-rechts, vorne-rechts, vorne-links
+  calibrating: false, calPts: [],
+  lowWhite: loadJSON("kt_low", 48),       // C3
+  nWhite: loadJSON("kt_n", 15),
+  prog: [], progIdx: 0, voicings: [],
+  H: null, Hinv: null,
+  smooth: {},                             // geglättete Fingerspitzen
+};
+function loadJSON(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } }
+function saveJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+
+// ---------- DOM ----------
+const $ = id => document.getElementById(id);
+const cv = $("cv"), ctx = cv.getContext("2d");
+const video = document.createElement("video");
+video.playsInline = true; video.muted = true; video.setAttribute("playsinline", "");
+let stream = null;
+
+// Linke-Taste-Auswahl: weiße Tasten von A0 bis C6
+for (let m = 21; m <= 84; m++) if (isWhite(m)) {
+  const o = document.createElement("option"); o.value = m; o.textContent = noteName(m); $("selLow").appendChild(o);
+}
+$("selLow").value = S.lowWhite; $("numWhite").value = S.nWhite;
+$("selLow").onchange = () => { S.lowWhite = +$("selLow").value; saveJSON("kt_low", S.lowWhite); rebuildVoicings(); };
+$("numWhite").onchange = () => { S.nWhite = Math.max(7, Math.min(52, +$("numWhite").value || 15)); saveJSON("kt_n", S.nWhite); rebuildVoicings(); };
+
+// ---------- Tastatur-Geometrie (Einheitskoordinaten u: 0..1 links→rechts, v: 0 hinten → 1 vorne) ----------
+const BLACK_DEPTH = 0.62, BLACK_W = 0.58; // in weißen Tastenbreiten
+function whiteKeys() { const a = []; let m = S.lowWhite; while (a.length < S.nWhite) { if (isWhite(m)) a.push(m); m++; } return a; }
+function keyRect(midi) {
+  const W = whiteKeys(), N = W.length;
+  if (isWhite(midi)) { const i = W.indexOf(midi); if (i < 0) return null; return { u0: i / N, u1: (i + 1) / N, v0: 0, v1: 1 }; }
+  const i = W.indexOf(midi - 1); if (i < 0 || i + 1 >= N) return null; // Schwarze Taste sitzt auf der Grenze rechts von midi-1
+  const c = (i + 1) / N, h = BLACK_W / 2 / N;
+  return { u0: c - h, u1: c + h, v0: 0, v1: BLACK_DEPTH };
+}
+function keyAt(u, v) {
+  const W = whiteKeys(), N = W.length;
+  if (u < 0 || u > 1 || v < -0.15 || v > 1.25) return null;
+  const w = u * N;
+  if (v < BLACK_DEPTH) {
+    const k = Math.round(w);
+    if (k > 0 && k < N && Math.abs(w - k) < BLACK_W / 2) {
+      const left = W[k - 1];
+      if ([0, 2, 5, 7, 9].includes(left % 12)) return left + 1;
+    }
+  }
+  return W[Math.min(N - 1, Math.max(0, Math.floor(w)))];
+}
+
+// ---------- Homografie ----------
+function solve(A, b) { // Gauß-Elimination
+  const n = b.length;
+  for (let i = 0; i < n; i++) {
+    let p = i; for (let r = i + 1; r < n; r++) if (Math.abs(A[r][i]) > Math.abs(A[p][i])) p = r;
+    [A[i], A[p]] = [A[p], A[i]]; [b[i], b[p]] = [b[p], b[i]];
+    for (let r = i + 1; r < n; r++) { const f = A[r][i] / A[i][i]; for (let c = i; c < n; c++) A[r][c] -= f * A[i][c]; b[r] -= f * b[i]; }
+  }
+  const x = new Array(n).fill(0);
+  for (let i = n - 1; i >= 0; i--) { let s = b[i]; for (let c = i + 1; c < n; c++) s -= A[i][c] * x[c]; x[i] = s / A[i][i]; }
+  return x;
+}
+function homography(src, dst) { // src[i] → dst[i]
+  const A = [], b = [];
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = src[i], [X, Y] = dst[i];
+    A.push([x, y, 1, 0, 0, 0, -x * X, -y * X]); b.push(X);
+    A.push([0, 0, 0, x, y, 1, -x * Y, -y * Y]); b.push(Y);
+  }
+  const h = solve(A, b); return [...h, 1];
+}
+function applyH(H, x, y) { const w = H[6] * x + H[7] * y + H[8]; return [(H[0] * x + H[1] * y + H[2]) / w, (H[3] * x + H[4] * y + H[5]) / w]; }
+function updateHomography() {
+  if (!S.cal) { S.H = S.Hinv = null; return; }
+  const unit = [[0, 0], [1, 0], [1, 1], [0, 1]];
+  S.H = homography(unit, S.cal); S.Hinv = homography(S.cal, unit);
+}
+updateHomography();
+
+// ---------- Akkorde & Voice Leading ----------
+const ROOTS = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, H: 11, B: 10 };
+function parseChord(tok) {
+  const m = tok.trim().match(/^([A-Ha-h])(#|is|es|s|b)?(m(?!aj)|moll)?/);
+  if (!m) return null;
+  const L = m[1].toUpperCase();
+  let root = ROOTS[L]; if (root === undefined) return null;
+  if (m[2] === "#" || m[2] === "is") root++;
+  if (m[2] === "es" || m[2] === "s" || m[2] === "b") { if (L === "B") root = 10; else root--; } // „Bb“ = B (deutsch) = Bb
+  const minor = !!m[3];
+  return { name: tok.trim(), pcs: [root, root + (minor ? 3 : 4), root + 7].map(x => ((x % 12) + 12) % 12) };
+}
+function candidates(ch) {
+  const W = whiteKeys(), lo = W[0], hi = W[W.length - 1] + 1, out = [];
+  for (let base = lo; base <= hi; base++) {
+    if (!ch.pcs.includes(base % 12)) continue;
+    const v = [base]; let cur = base;
+    while (v.length < 3) { cur++; if (ch.pcs.includes(cur % 12) && !v.some(n => n % 12 === cur % 12)) v.push(cur); }
+    if (v[2] <= hi && v.every(n => keyRect(n))) out.push(v);
+  }
+  return out;
+}
+function fingering(v) { return (v[2] - v[1] === 5) ? [1, 2, 5] : [1, 3, 5]; } // 1. Umkehrung → 1-2-5, sonst 1-3-5
+function rebuildVoicings() {
+  const W = whiteKeys(); const center = (W[0] + W[W.length - 1]) / 2 + 3; // leicht rechts der Mitte (rechte Hand)
+  let prev = null; S.voicings = [];
+  for (const ch of S.prog) {
+    const cands = candidates(ch);
+    if (!cands.length) { S.voicings.push(null); continue; }
+    let best = cands[0], bestCost = Infinity;
+    for (const c of cands) {
+      const cost = prev ? c.reduce((s, n, i) => s + Math.abs(n - prev[i]), 0) : Math.abs(c[1] - center);
+      if (cost < bestCost) { bestCost = cost; best = c; }
+    }
+    S.voicings.push(best); prev = best;
+  }
+  renderChordPanel();
+}
+function applyProgression() {
+  S.prog = $("progInput").value.split(/[\s,|–-]+/).map(parseChord).filter(Boolean);
+  S.progIdx = 0; rebuildVoicings();
+}
+$("btnApply").onclick = applyProgression;
+$("progInput").onkeydown = e => { if (e.key === "Enter") applyProgression(); };
+$("btnNext").onclick = () => { if (S.prog.length) { S.progIdx = (S.progIdx + 1) % S.prog.length; renderChordPanel(); } };
+$("btnPrev").onclick = () => { if (S.prog.length) { S.progIdx = (S.progIdx - 1 + S.prog.length) % S.prog.length; renderChordPanel(); } };
+
+function currentTargets() {
+  const v = S.voicings[S.progIdx]; if (!v) return [];
+  const f = fingering(v); return v.map((n, i) => ({ midi: n, finger: f[i] }));
+}
+function renderChordPanel() {
+  const ch = S.prog[S.progIdx];
+  $("chordName").textContent = ch ? ch.name : "–";
+  const nx = S.prog.length > 1 ? S.prog[(S.progIdx + 1) % S.prog.length] : null;
+  $("nextName").textContent = nx ? "als Nächstes: " + nx.name : "";
+  if (ch && !S.voicings[S.progIdx]) $("nextName").textContent = "Akkord passt nicht in den Tastenbereich";
+}
+
+// ---------- Quellen ----------
+async function startCamera() {
+  try {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: S.facing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    video.srcObject = stream; video.loop = false; await video.play();
+    S.mirror = S.facing === "user"; syncButtons();
+    setHint(S.cal ? "" : "Tippe auf „Kalibrieren“ und markiere die Tastatur.");
+  } catch (e) {
+    setHint("Kamera nicht verfügbar: " + (e.message || e) + ". Die Seite muss über https geöffnet sein. Alternativ: „Video laden“.");
+  }
+}
+$("btnCam").onclick = startCamera;
+$("btnFlip").onclick = () => { S.facing = S.facing === "user" ? "environment" : "user"; startCamera(); };
+$("btnVideo").onclick = () => $("fileVideo").click();
+$("fileVideo").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  video.srcObject = null; video.src = URL.createObjectURL(f); video.loop = true;
+  try { await video.play(); } catch {}
+  setHint(S.cal ? "" : "Tippe auf „Kalibrieren“ und markiere die Tastatur.");
+};
+$("btnMirror").onclick = () => { S.mirror = !S.mirror; syncButtons(); };
+$("btnGrid").onclick = () => { S.grid = !S.grid; syncButtons(); };
+function syncButtons() { $("btnMirror").classList.toggle("active", S.mirror); $("btnGrid").classList.toggle("active", S.grid); $("btnCal").classList.toggle("active", S.calibrating); }
+function setHint(t) { $("hint").textContent = t; }
+
+// ---------- Kalibrierung ----------
+const CAL_STEPS = [
+  "1/4: Tippe auf die LINKE weiße Taste, HINTERES Ende (dort, wo die Tasten im Gehäuse verschwinden).",
+  "2/4: Tippe auf die RECHTE weiße Taste, HINTERES Ende.",
+  "3/4: Tippe auf die RECHTE weiße Taste, VORDERE Kante (zu dir hin).",
+  "4/4: Tippe auf die LINKE weiße Taste, VORDERE Kante.",
+];
+$("btnCal").onclick = () => {
+  S.calibrating = !S.calibrating; S.calPts = []; syncButtons();
+  setHint(S.calibrating ? CAL_STEPS[0] : "");
+};
+cv.addEventListener("pointerdown", e => {
+  if (!S.calibrating) return;
+  const r = cv.getBoundingClientRect();
+  S.calPts.push([(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]); // normiert, in Anzeige-Koordinaten
+  if (S.calPts.length < 4) { setHint(CAL_STEPS[S.calPts.length]); return; }
+  // Anzeige → Bildkoordinaten (Spiegelung rausrechnen), damit die Kalibrierung unabhängig von der Spiegelung bleibt
+  S.cal = S.calPts.map(([x, y]) => [S.mirror ? 1 - x : x, y]);
+  S.calibrating = false; saveJSON("kt_cal", S.cal); updateHomography(); syncButtons();
+  setHint(""); rebuildVoicings();
+});
+
+// ---------- Handerkennung (MediaPipe) ----------
+let landmarker = null;
+async function initLandmarker() {
+  const VER = "0.10.14";
+  try {
+    const { FilesetResolver, HandLandmarker } = await import(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VER}/vision_bundle.mjs`);
+    const fileset = await FilesetResolver.forVisionTasks(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VER}/wasm`);
+    const opts = delegate => ({
+      baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task", delegate },
+      runningMode: "VIDEO", numHands: 2, minHandDetectionConfidence: 0.5, minTrackingConfidence: 0.5,
+    });
+    try { landmarker = await HandLandmarker.createFromOptions(fileset, opts("GPU")); status("Handerkennung bereit (GPU)."); }
+    catch { landmarker = await HandLandmarker.createFromOptions(fileset, opts("CPU")); status("Handerkennung bereit (CPU)."); }
+  } catch (e) {
+    status("Handerkennung konnte nicht geladen werden:\n" + (e.message || e) + "\nInternetverbindung nötig (cdn.jsdelivr.net, storage.googleapis.com).");
+  }
+}
+function status(t) { $("status").textContent = t; }
+
+// ---------- Hauptschleife ----------
+let lastVideoTime = -1, hands = [], fps = 0, lastFrameT = performance.now();
+function loop() {
+  requestAnimationFrame(loop);
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw) { drawIdle(); return; }
+  if (cv.width !== vw || cv.height !== vh) { cv.width = vw; cv.height = vh; }
+
+  if (landmarker && video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    try { const res = landmarker.detectForVideo(video, performance.now()); hands = res.landmarks || []; } catch { hands = []; }
+    const now = performance.now(); fps = fps * 0.9 + (1000 / Math.max(1, now - lastFrameT)) * 0.1; lastFrameT = now;
+  }
+
+  // Videobild
+  ctx.save();
+  if (S.mirror) { ctx.translate(vw, 0); ctx.scale(-1, 1); }
+  ctx.drawImage(video, 0, 0, vw, vh);
+  ctx.restore();
+
+  const targets = currentTargets();
+  if (S.H) drawKeyboard(targets);
+  const rh = pickRightHand();
+  drawHands(rh);
+  evaluate(targets, rh);
+  if (S.calibrating) drawCalPoints();
+}
+function drawIdle() {
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, cv.width, cv.height);
+}
+// Bildkoordinaten (normiert) → Canvas-Pixel inkl. Spiegelung
+const toPx = ([x, y]) => [(S.mirror ? 1 - x : x) * cv.width, y * cv.height];
+const unitToPx = (u, v) => toPx(applyH(S.H, u, v));
+
+function polyKey(r) {
+  const pts = [unitToPx(r.u0, r.v0), unitToPx(r.u1, r.v0), unitToPx(r.u1, r.v1), unitToPx(r.u0, r.v1)];
+  ctx.beginPath(); ctx.moveTo(...pts[0]); for (let i = 1; i < 4; i++) ctx.lineTo(...pts[i]); ctx.closePath();
+  return pts;
+}
+function drawKeyboard(targets) {
+  const W = whiteKeys(), N = W.length, lw = Math.max(1.5, cv.width / 700);
+  if (S.grid) {
+    ctx.strokeStyle = "rgba(255,255,255,.45)"; ctx.lineWidth = lw;
+    for (let i = 0; i <= N; i++) { const a = unitToPx(i / N, 0), b = unitToPx(i / N, 1); ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke(); }
+    const a = unitToPx(0, 0), b = unitToPx(1, 0), c = unitToPx(1, 1), d = unitToPx(0, 1);
+    ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.lineTo(...c); ctx.lineTo(...d); ctx.closePath(); ctx.stroke();
+    // C-Beschriftung zur Orientierung
+    ctx.fillStyle = "rgba(255,255,255,.85)"; ctx.font = `600 ${Math.round(cv.width / 70)}px -apple-system, sans-serif`; ctx.textAlign = "center";
+    W.forEach((m, i) => { if (m % 12 === 0) { const p = unitToPx((i + 0.5) / N, 1.08); ctx.fillText(noteName(m), ...p); } });
+  }
+  // Zieltasten
+  for (const t of targets) {
+    const r = keyRect(t.midi); if (!r) continue;
+    const col = FINGER_COLORS[t.finger];
+    polyKey(r); ctx.fillStyle = col + "88"; ctx.fill(); ctx.strokeStyle = col; ctx.lineWidth = lw * 2.2; ctx.stroke();
+    // Fingernummer im vorderen Bereich der Taste
+    const vMark = isWhite(t.midi) ? 0.82 : 0.45;
+    const p = unitToPx((r.u0 + r.u1) / 2, vMark);
+    const rad = Math.max(12, cv.width / 60);
+    ctx.beginPath(); ctx.arc(p[0], p[1], rad, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = lw; ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = `700 ${Math.round(rad * 1.1)}px -apple-system, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(String(t.finger), p[0], p[1] + 1); ctx.textBaseline = "alphabetic";
+  }
+}
+function handU(h) { if (!S.Hinv) return h[0].x; return applyH(S.Hinv, h[0].x, h[0].y)[0]; }
+function pickRightHand() {
+  if (!hands.length) return null;
+  if (hands.length === 1) return hands[0];
+  // Die rechte Hand ist die, deren Handgelenk weiter rechts auf der Tastatur liegt (höhere Töne)
+  return handU(hands[0]) > handU(hands[1]) ? hands[0] : hands[1];
+}
+const CONN = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+function drawHands(rh) {
+  const lw = Math.max(1.5, cv.width / 600);
+  for (const h of hands) {
+    const isR = h === rh;
+    ctx.strokeStyle = isR ? "rgba(255,255,255,.75)" : "rgba(255,255,255,.3)"; ctx.lineWidth = lw;
+    for (const [a, b] of CONN) { ctx.beginPath(); ctx.moveTo(...toPx([h[a].x, h[a].y])); ctx.lineTo(...toPx([h[b].x, h[b].y])); ctx.stroke(); }
+    for (let f = 1; f <= 5; f++) {
+      const p = toPx([h[TIP_IDX[f]].x, h[TIP_IDX[f]].y]), rad = Math.max(6, cv.width / 110);
+      ctx.beginPath(); ctx.arc(p[0], p[1], rad, 0, Math.PI * 2);
+      ctx.fillStyle = isR ? FINGER_COLORS[f] : "rgba(200,200,200,.6)"; ctx.fill();
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = lw; ctx.stroke();
+    }
+  }
+}
+function fingertipKey(h, f) {
+  if (!S.Hinv || !h) return null;
+  const lm = h[TIP_IDX[f]], key = "f" + f;
+  const prev = S.smooth[key];
+  const cur = prev ? { x: prev.x * 0.5 + lm.x * 0.5, y: prev.y * 0.5 + lm.y * 0.5 } : { x: lm.x, y: lm.y };
+  S.smooth[key] = cur;
+  const [u, v] = applyH(S.Hinv, cur.x, cur.y);
+  return { midi: keyAt(u, v), u, v, img: [cur.x, cur.y] };
+}
+function evaluate(targets, rh) {
+  const box = $("fingers"); let allOk = targets.length > 0, html = "";
+  for (const t of targets) {
+    const k = rh ? fingertipKey(rh, t.finger) : null;
+    let cls = "none", txt = "–";
+    if (!S.Hinv) { txt = "nicht kalibriert"; allOk = false; }
+    else if (!k || k.midi == null) { txt = "nicht erkannt"; allOk = false; }
+    else if (k.midi === t.midi) { cls = "ok"; txt = "✓ " + noteName(k.midi); }
+    else {
+      cls = "warn"; allOk = false;
+      const d = k.midi - t.midi; txt = noteName(k.midi) + (d > 0 ? " → weiter links" : " → weiter rechts");
+      // Pfeil vom Finger zur Zieltaste
+      const r = keyRect(t.midi);
+      if (r) {
+        const from = toPx(k.img), to = unitToPx((r.u0 + r.u1) / 2, isWhite(t.midi) ? 0.82 : 0.45);
+        arrow(from, to, FINGER_COLORS[t.finger]);
+      }
+    }
+    html += `<div><span class="dot" style="background:${FINGER_COLORS[t.finger]}">${t.finger}</span>${FINGER_NAMES[t.finger]} → <b>${noteName(t.midi)}</b><span class="st ${cls}">${txt}</span></div>`;
+  }
+  box.innerHTML = html;
+  const vd = $("verdict");
+  if (!targets.length) { vd.textContent = "Kein Akkord ausgewählt"; vd.className = ""; }
+  else if (!rh) { vd.textContent = "Noch keine Hand erkannt"; vd.className = ""; }
+  else if (allOk) { vd.textContent = "Griff stimmt!"; vd.className = "ok"; }
+  else { vd.textContent = "Finger anpassen"; vd.className = ""; }
+  if (landmarker) status(`Handerkennung aktiv · ${Math.round(fps)} Bilder/s · ${hands.length} Hand/Hände erkannt` + (S.Hinv ? "" : "\nNoch nicht kalibriert."));
+}
+function arrow(a, b, col) {
+  const lw = Math.max(2, cv.width / 350), ang = Math.atan2(b[1] - a[1], b[0] - a[0]), hl = lw * 5;
+  ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = lw; ctx.setLineDash([lw * 2, lw * 1.5]);
+  ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(b[0] - Math.cos(ang) * hl * 0.8, b[1] - Math.sin(ang) * hl * 0.8); ctx.stroke(); ctx.setLineDash([]);
+  ctx.beginPath(); ctx.moveTo(...b);
+  ctx.lineTo(b[0] - hl * Math.cos(ang - 0.45), b[1] - hl * Math.sin(ang - 0.45));
+  ctx.lineTo(b[0] - hl * Math.cos(ang + 0.45), b[1] - hl * Math.sin(ang + 0.45)); ctx.closePath(); ctx.fill();
+}
+function drawCalPoints() {
+  const r = Math.max(8, cv.width / 90);
+  S.calPts.forEach(([x, y], i) => {
+    const p = [x * cv.width, y * cv.height];
+    ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, Math.PI * 2); ctx.fillStyle = "#7a4fd6"; ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.font = `700 ${Math.round(r * 1.2)}px -apple-system, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(String(i + 1), p[0], p[1] + 1); ctx.textBaseline = "alphabetic";
+  });
+}
+
+// ---------- Start ----------
+applyProgression();
+syncButtons();
+requestAnimationFrame(loop);
+initLandmarker();
+</script>
+</body>
+</html>
