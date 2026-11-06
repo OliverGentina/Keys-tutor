@@ -63,6 +63,7 @@
   <button type="button" id="btnVideo">Video laden</button>
   <span class="sep"></span>
   <button id="btnCal">Kalibrieren</button>
+  <button id="btnAdjust">Ecken verschieben</button>
   <button id="btnMirror">Spiegeln</button>
   <button id="btnGrid" class="active">Tastenraster</button>
 </header>
@@ -86,6 +87,11 @@
     <div class="row"><label>Linke weiße Taste</label><select id="selLow"></select></div>
     <div class="row"><label>Anzahl weiße Tasten</label><input id="numWhite" type="number" min="7" max="52" value="15"></div>
     <p class="small">Zähle die weißen Tasten zwischen den Ecken, die du beim Kalibrieren antippst.</p>
+    <div class="row"><label>Obere Linie</label><select id="selTop">
+      <option value="black">Vorderkante schwarze Tasten</option>
+      <option value="back">Hinteres Tastenende</option>
+    </select></div>
+    <p class="small">Siehst du das hintere Ende der Tasten nicht, nimm die Vorderkante der schwarzen Tasten.</p>
 
     <div id="status">Handerkennung wird geladen …</div>
   </aside>
@@ -104,8 +110,9 @@ const TIP_IDX = [0, 4, 8, 12, 16, 20]; // MediaPipe-Landmarken der Fingerspitzen
 // ---------- Zustand ----------
 const S = {
   mirror: false, grid: true, facing: "environment",
-  cal: loadJSON("kt_cal", null),          // 4 Punkte, normiert (0..1) im Bild: hinten-links, hinten-rechts, vorne-rechts, vorne-links
-  calibrating: false, calPts: [],
+  cal: loadJSON("kt_cal", null),          // 4 Punkte, normiert (0..1) im Bild: oben-links, oben-rechts, vorne-rechts, vorne-links
+  calTop: loadJSON("kt_caltop", loadJSON("kt_cal", null) ? "back" : "black"), // "black" = Vorderkante der schwarzen Tasten, "back" = hinteres Tastenende
+  calibrating: false, calPts: [], adjusting: false, dragIdx: -1,
   lowWhite: loadJSON("kt_low", 48),       // C3
   nWhite: loadJSON("kt_n", 15),
   prog: [], progIdx: 0, voicings: [],
@@ -178,7 +185,8 @@ function homography(src, dst) { // src[i] → dst[i]
 function applyH(H, x, y) { const w = H[6] * x + H[7] * y + H[8]; return [(H[0] * x + H[1] * y + H[2]) / w, (H[3] * x + H[4] * y + H[5]) / w]; }
 function updateHomography() {
   if (!S.cal) { S.H = S.Hinv = null; return; }
-  const unit = [[0, 0], [1, 0], [1, 1], [0, 1]];
+  const vTop = S.calTop === "black" ? BLACK_DEPTH : 0; // obere Kalibrierlinie: hinteres Tastenende oder Vorderkante der schwarzen Tasten
+  const unit = [[0, vTop], [1, vTop], [1, 1], [0, 1]];
   S.H = homography(unit, S.cal); S.Hinv = homography(S.cal, unit);
 }
 updateHomography();
@@ -266,30 +274,62 @@ $("fileVideo").onchange = async e => {
 };
 $("btnMirror").onclick = () => { S.mirror = !S.mirror; syncButtons(); };
 $("btnGrid").onclick = () => { S.grid = !S.grid; syncButtons(); };
-function syncButtons() { $("btnMirror").classList.toggle("active", S.mirror); $("btnGrid").classList.toggle("active", S.grid); $("btnCal").classList.toggle("active", S.calibrating); }
+function syncButtons() { $("btnMirror").classList.toggle("active", S.mirror); $("btnGrid").classList.toggle("active", S.grid); $("btnCal").classList.toggle("active", S.calibrating); $("btnAdjust").classList.toggle("active", S.adjusting); }
 function setHint(t) { $("hint").textContent = t; }
 
 // ---------- Kalibrierung ----------
-const CAL_STEPS = [
-  "1/4: Tippe auf die LINKE weiße Taste, HINTERES Ende (dort, wo die Tasten im Gehäuse verschwinden).",
-  "2/4: Tippe auf die RECHTE weiße Taste, HINTERES Ende.",
-  "3/4: Tippe auf die RECHTE weiße Taste, VORDERE Kante (zu dir hin).",
-  "4/4: Tippe auf die LINKE weiße Taste, VORDERE Kante.",
-];
-$("btnCal").onclick = () => {
-  S.calibrating = !S.calibrating; S.calPts = []; syncButtons();
-  setHint(S.calibrating ? CAL_STEPS[0] : "");
+function calSteps() {
+  const top = S.calTop === "black"
+    ? ["LINKEN Rand der linken weißen Taste, auf Höhe der VORDERKANTE der schwarzen Tasten", "RECHTEN Rand der rechten weißen Taste, auf Höhe der VORDERKANTE der schwarzen Tasten"]
+    : ["LINKE weiße Taste, HINTERES Ende (wo die Tasten im Gehäuse verschwinden)", "RECHTE weiße Taste, HINTERES Ende"];
+  return [
+    "1/4: Tippe auf den " + top[0] + ".",
+    "2/4: Tippe auf den " + top[1] + ".",
+    "3/4: Tippe auf die RECHTE weiße Taste, VORDERE Kante (zu dir hin).",
+    "4/4: Tippe auf die LINKE weiße Taste, VORDERE Kante.",
+  ];
+}
+$("selTop").value = S.calTop;
+$("selTop").onchange = () => {
+  S.calTop = $("selTop").value; saveJSON("kt_caltop", S.calTop);
+  S.cal = null; saveJSON("kt_cal", null); updateHomography();
+  setHint("Bitte neu kalibrieren.");
 };
+$("btnCal").onclick = () => {
+  S.calibrating = !S.calibrating; S.adjusting = false; S.calPts = []; syncButtons();
+  setHint(S.calibrating ? calSteps()[0] : "");
+};
+$("btnAdjust").onclick = () => {
+  if (!S.cal) { setHint("Erst kalibrieren, dann kannst du die Ecken verschieben."); return; }
+  S.adjusting = !S.adjusting; S.calibrating = false; syncButtons();
+  setHint(S.adjusting ? "Ziehe die Ecken, bis das Raster genau auf den Tasten liegt. Danach wieder auf „Ecken verschieben“ tippen." : "");
+};
+// Anzeige-Koordinaten (normiert) ↔ Bildkoordinaten (Spiegelung rausrechnen), damit die Kalibrierung unabhängig von der Spiegelung bleibt
+function evtPos(e) { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]; }
+const dispToImg = ([x, y]) => [S.mirror ? 1 - x : x, y];
 cv.addEventListener("pointerdown", e => {
+  if (S.adjusting && S.cal) {
+    const p = dispToImg(evtPos(e)), r = cv.getBoundingClientRect();
+    let best = -1, bd = Infinity;
+    S.cal.forEach(([x, y], i) => { const d = Math.hypot((x - p[0]) * r.width, (y - p[1]) * r.height); if (d < bd) { bd = d; best = i; } });
+    if (bd < 60) { S.dragIdx = best; cv.setPointerCapture(e.pointerId); }
+    return;
+  }
   if (!S.calibrating) return;
-  const r = cv.getBoundingClientRect();
-  S.calPts.push([(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]); // normiert, in Anzeige-Koordinaten
-  if (S.calPts.length < 4) { setHint(CAL_STEPS[S.calPts.length]); return; }
-  // Anzeige → Bildkoordinaten (Spiegelung rausrechnen), damit die Kalibrierung unabhängig von der Spiegelung bleibt
-  S.cal = S.calPts.map(([x, y]) => [S.mirror ? 1 - x : x, y]);
+  S.calPts.push(evtPos(e));
+  if (S.calPts.length < 4) { setHint(calSteps()[S.calPts.length]); return; }
+  S.cal = S.calPts.map(dispToImg);
   S.calibrating = false; saveJSON("kt_cal", S.cal); updateHomography(); syncButtons();
-  setHint(""); rebuildVoicings();
+  setHint("Liegt das Raster nicht genau? Mit „Ecken verschieben“ nachjustieren.");
+  setTimeout(() => { if (!S.calibrating && !S.adjusting) setHint(""); }, 4000);
+  rebuildVoicings();
 });
+cv.addEventListener("pointermove", e => {
+  if (S.dragIdx < 0) return;
+  S.cal[S.dragIdx] = dispToImg(evtPos(e)); updateHomography();
+});
+const endDrag = () => { if (S.dragIdx >= 0) { S.dragIdx = -1; saveJSON("kt_cal", S.cal); } };
+cv.addEventListener("pointerup", endDrag); cv.addEventListener("pointercancel", endDrag);
 
 // ---------- Handerkennung (MediaPipe) ----------
 let landmarker = null;
@@ -336,6 +376,17 @@ function loop() {
   drawHands(rh);
   evaluate(targets, rh);
   if (S.calibrating) drawCalPoints();
+  if (S.adjusting && S.cal) drawHandles();
+}
+function drawHandles() {
+  const r = Math.max(12, cv.width / 60), pts = S.cal.map(toPx);
+  ctx.strokeStyle = "#b48cff"; ctx.lineWidth = Math.max(2, cv.width / 500);
+  ctx.beginPath(); ctx.moveTo(...pts[0]); pts.slice(1).forEach(p => ctx.lineTo(...p)); ctx.closePath(); ctx.stroke();
+  pts.forEach((p, i) => {
+    ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
+    ctx.fillStyle = i === S.dragIdx ? "#b48cff" : "rgba(122,79,214,.75)"; ctx.fill();
+    ctx.strokeStyle = "#fff"; ctx.stroke();
+  });
 }
 function drawIdle() {
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, cv.width, cv.height);
@@ -356,6 +407,9 @@ function drawKeyboard(targets) {
     for (let i = 0; i <= N; i++) { const a = unitToPx(i / N, 0), b = unitToPx(i / N, 1); ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke(); }
     const a = unitToPx(0, 0), b = unitToPx(1, 0), c = unitToPx(1, 1), d = unitToPx(0, 1);
     ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.lineTo(...c); ctx.lineTo(...d); ctx.closePath(); ctx.stroke();
+    // Umrisse der schwarzen Tasten, damit man die Passung prüfen kann
+    ctx.strokeStyle = "rgba(255,230,120,.7)";
+    W.forEach(m => { if ([0, 2, 5, 7, 9].includes(m % 12)) { const r = keyRect(m + 1); if (r) { polyKey(r); ctx.stroke(); } } });
     // C-Beschriftung zur Orientierung
     ctx.fillStyle = "rgba(255,255,255,.85)"; ctx.font = `600 ${Math.round(cv.width / 70)}px -apple-system, sans-serif`; ctx.textAlign = "center";
     W.forEach((m, i) => { if (m % 12 === 0) { const p = unitToPx((i + 0.5) / N, 1.08); ctx.fillText(noteName(m), ...p); } });
